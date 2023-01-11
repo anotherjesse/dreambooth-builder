@@ -16,6 +16,7 @@ we only need to upload our changes (weights & predict.py)
 
 1. docker must be installed
 2. install `cog` and authenticate
+3. the modelname must already exist for your username (go [here](https://replicate.com/create) to create a model on replicate, then use it with `build.sh`)
 
 ## usage
 
