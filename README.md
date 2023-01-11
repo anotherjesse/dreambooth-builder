@@ -21,14 +21,13 @@ we only need to upload our changes (weights & predict.py)
 ## usage
 
 0. make sure cog is authenticated
-
 1. run dreambooth trainer on replicate.com - not dreambooth api
-
 2. Download the output.zip and put it into a directory called weights
-
 3. ./build.sh r8.im/username/modelname
 
-## todo
+## todo / open questions
 
-- [ ] parse the sha of the pushed model to let you the replicate verison numer
-- [ ] is there a way to skip downloading the existing layers, ... just create new layers and push - since this isn't for running locally
+- [ ] parse the sha of the pushed model to let you the replicate verison / image
+- [ ] speed!!! downloading layers doesn't seem useful... is there a way to skip downloading the existing r8.im layers, ... just create new layer(s) and push - as this isn't for running locally
+- [ ] efficiency?!? is sharing the base image of cog-stable-diffusion helpful? does having the SD2.1 weights in an unused but present layer make things better or worse?
+- [ ] build these into cog?
