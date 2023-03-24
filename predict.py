@@ -7,6 +7,7 @@ from cog import BasePredictor, Input, Path
 from diffusers import (
     StableDiffusionPipeline,
     StableDiffusionImg2ImgPipeline,
+    StableDiffusionInpaintPipeline,
     PNDMScheduler,
     LMSDiscreteScheduler,
     DDIMScheduler,
@@ -20,6 +21,8 @@ from diffusers.pipelines.stable_diffusion.safety_checker import (
 from PIL import Image
 from transformers import CLIPFeatureExtractor
 
+# Add this import for PIL ImageOps
+import PIL.ImageOps
 
 SAFETY_MODEL_CACHE = "diffusers-cache"
 SAFETY_MODEL_ID = "CompVis/stable-diffusion-safety-checker"
@@ -43,6 +46,9 @@ except:
     pass
 if not DEFAULT_PROMPT:
     DEFAULT_PROMPT = "a photo of an astronaut riding a horse on mars"
+
+SAFETY_MODEL_CACHE = "diffusers-cache"
+SAFETY_MODEL_ID = "CompVis/stable-diffusion-safety-checker"
 
 
 class Predictor(BasePredictor):
@@ -77,6 +83,17 @@ class Predictor(BasePredictor):
             feature_extractor=self.txt2img_pipe.feature_extractor,
         ).to("cuda")
 
+        # Add this setup code for inpainting_pipe
+        print("Loading Inpainting pipeline...")
+        self.inpainting_pipe = StableDiffusionInpaintPipeline.from_pretrained(
+            "runwayml/stable-diffusion-inpainting",
+            cache_dir=MODEL_CACHE,
+            local_files_only=True,
+            revision="fp16",
+            torch_dtype=torch.float16,
+        ).to("cuda")
+
+    # Add additional inpainting-related inputs to the predict function
     @torch.inference_mode()
     def predict(
         self,
@@ -94,12 +111,14 @@ class Predictor(BasePredictor):
         ),
         width: int = Input(
             description="Width of output image. Maximum size is 1024x768 or 768x1024 because of memory limits",
-            choices=[128, 256, 384, 448, 512, 576, 640, 704, 768, 832, 896, 960, 1024],
+            choices=[128, 256, 384, 448, 512, 576,
+                     640, 704, 768, 832, 896, 960, 1024],
             default=DEFAULT_WIDTH,
         ),
         height: int = Input(
             description="Height of output image. Maximum size is 1024x768 or 768x1024 because of memory limits",
-            choices=[128, 256, 384, 448, 512, 576, 640, 704, 768, 832, 896, 960, 1024],
+            choices=[128, 256, 384, 448, 512, 576,
+                     640, 704, 768, 832, 896, 960, 1024],
             default=DEFAULT_HEIGHT,
         ),
         prompt_strength: float = Input(
@@ -136,6 +155,20 @@ class Predictor(BasePredictor):
         disable_safety_check: bool = Input(
             description="Disable safety check. Use at your own risk!", default=False
         ),
+        mode: str = Input(
+            description="Choose the mode of operation: 'txt2img', 'img2img', or 'inpaint'.",
+            choices=["txt2img", "img2img", "inpaint"],
+            default="txt2img",
+        ),
+        mask: Path = Input(
+            description="Black and white image to use as mask. Required only in 'inpaint' mode. White pixels are inpainted and black pixels are preserved.",
+            default=None,
+        ),
+        invert_mask: bool = Input(
+            description="If this is true, then black pixels are inpainted and white pixels are preserved. Used only in 'inpaint' mode.",
+            default=False,
+        ),
+        # ...
     ) -> List[Path]:
         """Run a single prediction on the model"""
         if seed is None:
@@ -170,6 +203,25 @@ class Predictor(BasePredictor):
             pipe.safety_checker = None
         else:
             pipe.safety_checker = self.safety_checker
+
+        # Add this code to handle the inpainting mode
+        if mode == "inpaint":
+            if not mask:
+                raise ValueError(
+                    "A mask must be provided for inpainting mode.")
+            if not image:
+                raise ValueError(
+                    "An image must be provided for inpainting mode.")
+
+            print("using inpainting")
+            pipe = self.inpainting_pipe
+            extra_kwargs = {
+                "image": Image.open(image).convert("RGB"),
+                "mask": Image.open(mask).convert("RGB"),
+                "invert_mask": invert_mask,
+            }
+
+        # ...
 
         output = pipe(
             prompt=[prompt] * num_outputs if prompt is not None else None,
