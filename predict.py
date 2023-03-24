@@ -24,6 +24,8 @@ from transformers import CLIPFeatureExtractor
 # Add this import for PIL ImageOps
 import PIL.ImageOps
 
+MODEL_ID = "stabilityai/stable-diffusion-2-1"
+MODEL_CACHE = "diffusers-cache"
 SAFETY_MODEL_CACHE = "diffusers-cache"
 SAFETY_MODEL_ID = "CompVis/stable-diffusion-safety-checker"
 
