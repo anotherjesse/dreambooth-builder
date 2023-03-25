@@ -1,6 +1,5 @@
 import json
 import os
-import base64
 from io import BytesIO
 from typing import List
 
