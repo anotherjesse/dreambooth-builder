@@ -1,13 +1,16 @@
 import json
 import os
+import base64
+from io import BytesIO
 from typing import List
 
 import torch
+import torch.nn as nn
+import numpy as np
 from cog import BasePredictor, Input, Path
 from diffusers import (
     StableDiffusionPipeline,
     StableDiffusionImg2ImgPipeline,
-    StableDiffusionInpaintPipeline,
     PNDMScheduler,
     LMSDiscreteScheduler,
     DDIMScheduler,
@@ -15,6 +18,7 @@ from diffusers import (
     EulerAncestralDiscreteScheduler,
     DPMSolverMultistepScheduler,
 )
+from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion_inpaint_legacy import StableDiffusionInpaintPipelineLegacy
 from diffusers.pipelines.stable_diffusion.safety_checker import (
     StableDiffusionSafetyChecker,
 )
@@ -75,6 +79,10 @@ class Predictor(BasePredictor):
             torch_dtype=torch.float16,
         ).to("cuda")
 
+        self.txt2img_pipe.unet.config.in_channels = 9
+        unet_config = self.txt2img_pipe.unet.config
+        unet_config["in_channels"] = 9
+
         self.img2img_pipe = StableDiffusionImg2ImgPipeline(
             vae=self.txt2img_pipe.vae,
             text_encoder=self.txt2img_pipe.text_encoder,
@@ -87,13 +95,17 @@ class Predictor(BasePredictor):
 
         # Add this setup code for inpainting_pipe
         print("Loading Inpainting pipeline...")
-        self.inpainting_pipe = StableDiffusionInpaintPipeline.from_pretrained(
-            "runwayml/stable-diffusion-inpainting",
-            cache_dir=MODEL_CACHE,
-            local_files_only=True,
-            revision="fp16",
-            torch_dtype=torch.float16,
+        self.inpainting_pipe = StableDiffusionInpaintPipelineLegacy(
+            vae=self.txt2img_pipe.vae,
+            text_encoder=self.txt2img_pipe.text_encoder,
+            tokenizer=self.txt2img_pipe.tokenizer,
+            unet=self.txt2img_pipe.unet,
+            scheduler=self.txt2img_pipe.scheduler,
+            safety_checker=self.txt2img_pipe.safety_checker,
+            feature_extractor=self.txt2img_pipe.feature_extractor,
         ).to("cuda")
+
+        self.inpainting_pipe.unet.config.in_channels = 9
 
     # Add additional inpainting-related inputs to the predict function
     @torch.inference_mode()
@@ -160,7 +172,7 @@ class Predictor(BasePredictor):
         mode: str = Input(
             description="Choose the mode of operation: 'txt2img', 'img2img', or 'inpaint'.",
             choices=["txt2img", "img2img", "inpaint"],
-            default="txt2img",
+            default="inpaint",
         ),
         mask: Path = Input(
             description="Black and white image to use as mask. Required only in 'inpaint' mode. White pixels are inpainted and black pixels are preserved.",
@@ -182,7 +194,33 @@ class Predictor(BasePredictor):
                 "Maximum size is 1024x768 or 768x1024 pixels, because of memory limits. Please select a lower width or height."
             )
 
-        if image is not None:
+        if mode == "inpaint":
+            print("using inpaint")
+            pipe = self.inpainting_pipe
+
+            # Load the mask image and invert it if needed
+            image = Image.open(image).convert("RGB")
+            mask = Image.open(mask).convert("RGB")
+
+            if invert_mask:
+                mask = PIL.ImageOps.invert(mask)
+
+            if image.width % 8 != 0 or image.height % 8 != 0:
+                if mask.size == image.size:
+                    mask = crop(mask)
+                image = crop(image)
+
+            if mask.size != image.size:
+                print(
+                    f"WARNING: Mask size ({mask.width}, {mask.height}) is different to image size ({image.width}, {image.height}). Mask will be resized to image size."
+                )
+                mask = mask.resize(image.size)
+
+            extra_kwargs = {
+                "init_image": image,
+                "mask_image": mask,
+            }
+        elif image is not None:
             print("using img2img")
             pipe = self.img2img_pipe
             extra_kwargs = {
@@ -206,51 +244,43 @@ class Predictor(BasePredictor):
         else:
             pipe.safety_checker = self.safety_checker
 
-        # Add this code to handle the inpainting mode
-        if mode == "inpaint":
-            if not mask:
-                raise ValueError(
-                    "A mask must be provided for inpainting mode.")
-            if not image:
-                raise ValueError(
-                    "An image must be provided for inpainting mode.")
-
-            print("using inpainting")
-            pipe = self.inpainting_pipe
-            extra_kwargs = {
-                "image": Image.open(image).convert("RGB"),
-                "mask": Image.open(mask).convert("RGB"),
-                "invert_mask": invert_mask,
-            }
-
-        # ...
-
-        output = pipe(
-            prompt=[prompt] * num_outputs if prompt is not None else None,
-            negative_prompt=[negative_prompt] * num_outputs
-            if negative_prompt is not None
-            else None,
-            guidance_scale=guidance_scale,
-            generator=generator,
-            num_inference_steps=num_inference_steps,
-            **extra_kwargs,
-        )
-
-        output_paths = []
-        for i, sample in enumerate(output.images):
-            if output.nsfw_content_detected and output.nsfw_content_detected[i]:
-                continue
-
-            output_path = f"/tmp/out-{i}.png"
-            sample.save(output_path)
-            output_paths.append(Path(output_path))
-
-        if len(output_paths) == 0:
-            raise Exception(
-                f"NSFW content detected. Try running it again, or try a different prompt."
+            output = pipe(
+                prompt=prompt,
+                negative_prompt=negative_prompt,
+                num_images_per_prompt=num_outputs,
+                guidance_scale=guidance_scale,
+                generator=generator,
+                num_inference_steps=num_inference_steps,
+                **extra_kwargs,
             )
 
-        return output_paths
+            samples = [
+                output.images[i]
+                for i, nsfw_flag in enumerate(output.nsfw_content_detected)
+                if not nsfw_flag
+            ]
+
+            if len(samples) == 0:
+                raise Exception(
+                    f"NSFW content detected. Try running it again, or try a different prompt."
+                )
+
+            if num_outputs > len(samples):
+                print(
+                    f"NSFW content detected in {num_outputs - len(samples)} outputs, returning the remaining {len(samples)} images."
+                )
+            output_paths = []
+            for i, sample in enumerate(samples):
+                output_path = f"/tmp/out-{i}.png"
+                sample.save(output_path)
+                output_paths.append(Path(output_path))
+
+            if len(output_paths) == 0:
+                raise Exception(
+                    f"NSFW content detected. Try running it again, or try a different prompt."
+                )
+
+            return output_paths
 
 
 def make_scheduler(name, config):
@@ -262,3 +292,14 @@ def make_scheduler(name, config):
         "K_EULER_ANCESTRAL": EulerAncestralDiscreteScheduler.from_config(config),
         "DPMSolverMultistep": DPMSolverMultistepScheduler.from_config(config),
     }[name]
+
+
+def crop(image):
+    height = (image.height // 8) * 8
+    width = (image.width // 8) * 8
+    left = int((image.width - width) / 2)
+    right = left + width
+    top = int((image.height - height) / 2)
+    bottom = top + height
+    image = image.crop((left, top, right, bottom))
+    return image
