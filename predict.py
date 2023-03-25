@@ -163,10 +163,12 @@ class Predictor(BasePredictor):
             description="Choose a scheduler",
         ),
         seed: int = Input(
-            description="Random seed. Leave blank to randomize the seed", default=None
+            description="Random seed. Leave blank to randomize the seed",
+            default=None
         ),
         disable_safety_check: bool = Input(
-            description="Disable safety check. Use at your own risk!", default=False
+            description="Disable safety check. Use at your own risk!",
+            default=True
         ),
         mode: str = Input(
             description="Choose the mode of operation: 'txt2img', 'img2img', or 'inpaint'.",
