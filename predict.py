@@ -243,43 +243,43 @@ class Predictor(BasePredictor):
         else:
             pipe.safety_checker = self.safety_checker
 
-            output = pipe(
-                prompt=prompt,
-                negative_prompt=negative_prompt,
-                num_images_per_prompt=num_outputs,
-                guidance_scale=guidance_scale,
-                generator=generator,
-                num_inference_steps=num_inference_steps,
-                **extra_kwargs,
+        output = pipe(
+            prompt=prompt,
+            negative_prompt=negative_prompt,
+            num_images_per_prompt=num_outputs,
+            guidance_scale=guidance_scale,
+            generator=generator,
+            num_inference_steps=num_inference_steps,
+            **extra_kwargs,
+        )
+
+        samples = [
+            output.images[i]
+            for i, nsfw_flag in enumerate(output.nsfw_content_detected)
+            if not nsfw_flag
+        ]
+
+        if len(samples) == 0:
+            raise Exception(
+                f"NSFW content detected. Try running it again, or try a different prompt."
             )
 
-            samples = [
-                output.images[i]
-                for i, nsfw_flag in enumerate(output.nsfw_content_detected)
-                if not nsfw_flag
-            ]
+        if num_outputs > len(samples):
+            print(
+                f"NSFW content detected in {num_outputs - len(samples)} outputs, returning the remaining {len(samples)} images."
+            )
+        output_paths = []
+        for i, sample in enumerate(samples):
+            output_path = f"/tmp/out-{i}.png"
+            sample.save(output_path)
+            output_paths.append(Path(output_path))
 
-            if len(samples) == 0:
-                raise Exception(
-                    f"NSFW content detected. Try running it again, or try a different prompt."
-                )
+        if len(output_paths) == 0:
+            raise Exception(
+                f"NSFW content detected. Try running it again, or try a different prompt."
+            )
 
-            if num_outputs > len(samples):
-                print(
-                    f"NSFW content detected in {num_outputs - len(samples)} outputs, returning the remaining {len(samples)} images."
-                )
-            output_paths = []
-            for i, sample in enumerate(samples):
-                output_path = f"/tmp/out-{i}.png"
-                sample.save(output_path)
-                output_paths.append(Path(output_path))
-
-            if len(output_paths) == 0:
-                raise Exception(
-                    f"NSFW content detected. Try running it again, or try a different prompt."
-                )
-
-            return output_paths
+        return output_paths
 
 
 def make_scheduler(name, config):
