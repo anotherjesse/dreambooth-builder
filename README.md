@@ -1,3 +1,9 @@
+# to get weights
+
+curl -L -o output.zip https://replicate.delivery/pbxt/4lrw9387HOaKKR7kHv5YX4N59OSP0ltIcfaYWdm2lHAGVCBIA/output.zip
+mkdir weights
+unzip output.zip -d weights
+
 # dreambooth-builder
 
 This is a prototype to build a replicate model using existing replicate models as the base.
@@ -8,7 +14,7 @@ These concepts might be incorporated into cog/replicate's [dreambooth api](https
 
 using `cog push` to build/push a model many times results in a lot of work - downloading / building / ... But each model you build technically just has a difference of the weights.
 
-if we could take an existing popular stable diffusion model, and throw our weights and any customization to predict.py - our image should be much smaller/faster builds/... 
+if we could take an existing popular stable diffusion model, and throw our weights and any customization to predict.py - our image should be much smaller/faster builds/...
 
 we only need to upload our changes (weights & predict.py)
 
