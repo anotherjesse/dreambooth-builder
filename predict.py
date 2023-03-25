@@ -95,13 +95,13 @@ class Predictor(BasePredictor):
         # Add this setup code for inpainting_pipe
         print("Loading Inpainting pipeline...")
         self.inpainting_pipe = StableDiffusionInpaintPipelineLegacy(
-            vae=self.txt2img_pipe.vae,
-            text_encoder=self.txt2img_pipe.text_encoder,
-            tokenizer=self.txt2img_pipe.tokenizer,
-            unet=self.txt2img_pipe.unet,
-            scheduler=self.txt2img_pipe.scheduler,
-            safety_checker=self.txt2img_pipe.safety_checker,
-            feature_extractor=self.txt2img_pipe.feature_extractor,
+            vae=self.img2img_pipe.vae,
+            text_encoder=self.img2img_pipe.text_encoder,
+            tokenizer=self.img2img_pipe.tokenizer,
+            unet=self.img2img_pipe.unet,
+            scheduler=self.img2img_pipe.scheduler,
+            safety_checker=self.img2img_pipe.safety_checker,
+            feature_extractor=self.img2img_pipe.feature_extractor,
         ).to("cuda")
 
         self.inpainting_pipe.unet.config.in_channels = 9
