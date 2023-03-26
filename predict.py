@@ -78,10 +78,6 @@ class Predictor(BasePredictor):
             torch_dtype=torch.float16,
         ).to("cuda")
 
-        self.txt2img_pipe.unet.config.in_channels = 9
-        unet_config = self.txt2img_pipe.unet.config
-        unet_config["in_channels"] = 9
-
         self.img2img_pipe = StableDiffusionImg2ImgPipeline(
             vae=self.txt2img_pipe.vae,
             text_encoder=self.txt2img_pipe.text_encoder,
@@ -103,8 +99,6 @@ class Predictor(BasePredictor):
             safety_checker=self.img2img_pipe.safety_checker,
             feature_extractor=self.img2img_pipe.feature_extractor,
         ).to("cuda")
-
-        self.inpainting_pipe.unet.config.in_channels = 9
 
     # Add additional inpainting-related inputs to the predict function
     @torch.inference_mode()
