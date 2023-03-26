@@ -187,7 +187,9 @@ class Predictor(BasePredictor):
             default=False,
         ),
         upscale: int = Input(
-            choices=[2, 4, 8], description="Upscaling factor", default=4
+            choices=[2, 4, 8],
+            description="Upscaling factor",
+            default=4
         ),
     ) -> List[Path]:
         """Run a single prediction on the model"""
@@ -228,14 +230,16 @@ class Predictor(BasePredictor):
                 "init_image": image,
                 "mask_image": mask,
             }
-        elif image is not None:
+
+        if mode == "img2img":
             print("using img2img")
             pipe = self.img2img_pipe
             extra_kwargs = {
                 "image": Image.open(image).convert("RGB"),
                 "strength": prompt_strength,
             }
-        else:
+
+        if mode == "txt2img":
             print("using txt2img")
             pipe = self.txt2img_pipe
             extra_kwargs = {
@@ -280,9 +284,20 @@ class Predictor(BasePredictor):
 
         output_paths = []
         for i, image in enumerate(output.images):
-            output_path = f"/tmp/out-{i}.png"
-            sr_image = model.predict(image)
-            sr_image.save(output_path)
+            if mode == "inpaint":
+                output_path = f"/tmp/out-{i}.png"
+                sr_image = model.predict(image)
+                sr_image.save(output_path)
+            if mode == "txt2img":
+                output_path = f"/tmp/out-{i}.png"
+                image.save(output_path)
+            if mode == "img2img":
+                output_path = f"/tmp/out-img2img-{i}.png"
+                sr_image = model.predict(image)
+                sr_image.save(output_path)
+
+            print(f"Creating output path: {mode}")
+            print(f"Creating output path: {output_path}")
             output_paths.append(Path(output_path))
 
         if len(output_paths) == 0:
