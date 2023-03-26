@@ -1,39 +1,49 @@
+# #!/usr/bin/env python
+
+# from predict import MODEL_CACHE, MODEL_ID, SAFETY_MODEL_ID
+# import os
+# import sys
+# import shutil
+# import torch
+
+# from diffusers import StableDiffusionPipeline
+# from diffusers.pipelines.stable_diffusion.safety_checker import \
+#     StableDiffusionSafetyChecker
+
+# # append project directory to path so predict.py can be imported
+# sys.path.append('.')
+# # sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+# # Create directories for both models
+# os.makedirs(MODEL_CACHE, exist_ok=True)
+# os.makedirs("diffusers-cache", exist_ok=True)
+
+# # Download weights for the safety checker model
+# safety_checker = StableDiffusionSafetyChecker.from_pretrained(
+#     SAFETY_MODEL_ID,
+#     cache_dir=MODEL_CACHE,
+# )
+
+# # Download weights for the main inpainting model from the first repository
+# pipe1 = StableDiffusionPipeline.from_pretrained(
+#     MODEL_ID,
+#     cache_dir=MODEL_CACHE,
+# )
+
+# # Download weights for the main inpainting model from the second repository
+# pipe2 = StableDiffusionPipeline.from_pretrained(
+#     "runwayml/stable-diffusion-inpainting",
+#     cache_dir="diffusers-cache",
+#     revision="fp16",
+#     torch_dtype=torch.float16,
+#     use_auth_token=sys.argv[1],
+# )
+
 #!/usr/bin/env python
 
-from predict import MODEL_CACHE, MODEL_ID, SAFETY_MODEL_ID
-import os
-import sys
-import shutil
-import torch
 
-from diffusers import StableDiffusionPipeline
-from diffusers.pipelines.stable_diffusion.safety_checker import \
-    StableDiffusionSafetyChecker
+from RealESRGAN import RealESRGAN
 
-# append project directory to path so predict.py can be imported
-sys.path.append('.')
-# sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-# Create directories for both models
-os.makedirs(MODEL_CACHE, exist_ok=True)
-os.makedirs("diffusers-cache", exist_ok=True)
 
-# Download weights for the safety checker model
-safety_checker = StableDiffusionSafetyChecker.from_pretrained(
-    SAFETY_MODEL_ID,
-    cache_dir=MODEL_CACHE,
-)
-
-# Download weights for the main inpainting model from the first repository
-pipe1 = StableDiffusionPipeline.from_pretrained(
-    MODEL_ID,
-    cache_dir=MODEL_CACHE,
-)
-
-# Download weights for the main inpainting model from the second repository
-pipe2 = StableDiffusionPipeline.from_pretrained(
-    "runwayml/stable-diffusion-inpainting",
-    cache_dir="diffusers-cache",
-    revision="fp16",
-    torch_dtype=torch.float16,
-    use_auth_token=sys.argv[1],
-)
+for scale in [2, 4, 8]:
+    model = RealESRGAN("cuda", scale=scale)
+    model.load_weights(f"weights/RealESRGAN_x{scale}.pth", download=True)

@@ -23,6 +23,7 @@ from diffusers.pipelines.stable_diffusion.safety_checker import (
 )
 from PIL import Image
 from transformers import CLIPFeatureExtractor
+from RealESRGAN import RealESRGAN
 
 # Add this import for PIL ImageOps
 import PIL.ImageOps
@@ -58,6 +59,14 @@ SAFETY_MODEL_ID = "CompVis/stable-diffusion-safety-checker"
 
 class Predictor(BasePredictor):
     def setup(self):
+        self.models = {}
+
+        for scale in [2, 4, 8]:
+            self.models[scale] = RealESRGAN("cuda", scale=scale)
+            self.models[scale].load_weights(
+                f"weights/RealESRGAN_x{scale}.pth", download=False
+            )
+
         """Load the model into memory to make running multiple predictions efficient"""
         print("Loading Safety pipeline...")
         self.safety_checker = StableDiffusionSafetyChecker.from_pretrained(
@@ -177,12 +186,16 @@ class Predictor(BasePredictor):
             description="If this is true, then black pixels are inpainted and white pixels are preserved. Used only in 'inpaint' mode.",
             default=False,
         ),
-        # ...
+        upscale: int = Input(
+            choices=[2, 4, 8], description="Upscaling factor", default=4
+        ),
     ) -> List[Path]:
         """Run a single prediction on the model"""
         if seed is None:
             seed = int.from_bytes(os.urandom(2), "big")
         print(f"Using seed: {seed}")
+
+        model = self.models[upscale]
 
         if width * height > 786432:
             raise ValueError(
@@ -268,7 +281,8 @@ class Predictor(BasePredictor):
         output_paths = []
         for i, image in enumerate(output.images):
             output_path = f"/tmp/out-{i}.png"
-            image.save(output_path)
+            sr_image = model.predict(image)
+            sr_image.save(output_path)
             output_paths.append(Path(output_path))
 
         if len(output_paths) == 0:
