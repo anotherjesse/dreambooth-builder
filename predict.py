@@ -1,8 +1,11 @@
 import json
 import os
+from io import BytesIO
 from typing import List
 
 import torch
+import torch.nn as nn
+import numpy as np
 from cog import BasePredictor, Input, Path
 from diffusers import (
     StableDiffusionPipeline,
@@ -14,13 +17,19 @@ from diffusers import (
     EulerAncestralDiscreteScheduler,
     DPMSolverMultistepScheduler,
 )
+from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion_inpaint_legacy import StableDiffusionInpaintPipelineLegacy
 from diffusers.pipelines.stable_diffusion.safety_checker import (
     StableDiffusionSafetyChecker,
 )
 from PIL import Image
 from transformers import CLIPFeatureExtractor
+from RealESRGAN import RealESRGAN
 
+# Add this import for PIL ImageOps
+import PIL.ImageOps
 
+MODEL_ID = "stabilityai/stable-diffusion-2-1"
+MODEL_CACHE = "diffusers-cache"
 SAFETY_MODEL_CACHE = "diffusers-cache"
 SAFETY_MODEL_ID = "CompVis/stable-diffusion-safety-checker"
 
@@ -44,9 +53,20 @@ except:
 if not DEFAULT_PROMPT:
     DEFAULT_PROMPT = "a photo of an astronaut riding a horse on mars"
 
+SAFETY_MODEL_CACHE = "diffusers-cache"
+SAFETY_MODEL_ID = "CompVis/stable-diffusion-safety-checker"
+
 
 class Predictor(BasePredictor):
     def setup(self):
+        self.models = {}
+
+        for scale in [2, 4, 8]:
+            self.models[scale] = RealESRGAN("cuda", scale=scale)
+            self.models[scale].load_weights(
+                f"weights/RealESRGAN_x{scale}.pth", download=False
+            )
+
         """Load the model into memory to make running multiple predictions efficient"""
         print("Loading Safety pipeline...")
         self.safety_checker = StableDiffusionSafetyChecker.from_pretrained(
@@ -77,6 +97,19 @@ class Predictor(BasePredictor):
             feature_extractor=self.txt2img_pipe.feature_extractor,
         ).to("cuda")
 
+        # Add this setup code for inpainting_pipe
+        print("Loading Inpainting pipeline...")
+        self.inpainting_pipe = StableDiffusionInpaintPipelineLegacy(
+            vae=self.img2img_pipe.vae,
+            text_encoder=self.img2img_pipe.text_encoder,
+            tokenizer=self.img2img_pipe.tokenizer,
+            unet=self.img2img_pipe.unet,
+            scheduler=self.img2img_pipe.scheduler,
+            safety_checker=self.img2img_pipe.safety_checker,
+            feature_extractor=self.img2img_pipe.feature_extractor,
+        ).to("cuda")
+
+    # Add additional inpainting-related inputs to the predict function
     @torch.inference_mode()
     def predict(
         self,
@@ -94,12 +127,14 @@ class Predictor(BasePredictor):
         ),
         width: int = Input(
             description="Width of output image. Maximum size is 1024x768 or 768x1024 because of memory limits",
-            choices=[128, 256, 384, 448, 512, 576, 640, 704, 768, 832, 896, 960, 1024],
+            choices=[128, 256, 384, 448, 512, 576,
+                     640, 704, 768, 832, 896, 960, 1024],
             default=DEFAULT_WIDTH,
         ),
         height: int = Input(
             description="Height of output image. Maximum size is 1024x768 or 768x1024 because of memory limits",
-            choices=[128, 256, 384, 448, 512, 576, 640, 704, 768, 832, 896, 960, 1024],
+            choices=[128, 256, 384, 448, 512, 576,
+                     640, 704, 768, 832, 896, 960, 1024],
             default=DEFAULT_HEIGHT,
         ),
         prompt_strength: float = Input(
@@ -131,10 +166,30 @@ class Predictor(BasePredictor):
             description="Choose a scheduler",
         ),
         seed: int = Input(
-            description="Random seed. Leave blank to randomize the seed", default=None
+            description="Random seed. Leave blank to randomize the seed",
+            default=None
         ),
         disable_safety_check: bool = Input(
-            description="Disable safety check. Use at your own risk!", default=False
+            description="Disable safety check. Use at your own risk!",
+            default=True
+        ),
+        mode: str = Input(
+            description="Choose the mode of operation: 'txt2img', 'img2img', or 'inpaint'.",
+            choices=["txt2img", "img2img", "inpaint"],
+            default="inpaint",
+        ),
+        mask: Path = Input(
+            description="Black and white image to use as mask. Required only in 'inpaint' mode. White pixels are inpainted and black pixels are preserved.",
+            default=None,
+        ),
+        invert_mask: bool = Input(
+            description="If this is true, then black pixels are inpainted and white pixels are preserved. Used only in 'inpaint' mode.",
+            default=False,
+        ),
+        upscale: int = Input(
+            choices=[2, 4, 8],
+            description="Upscaling factor",
+            default=4
         ),
     ) -> List[Path]:
         """Run a single prediction on the model"""
@@ -142,19 +197,49 @@ class Predictor(BasePredictor):
             seed = int.from_bytes(os.urandom(2), "big")
         print(f"Using seed: {seed}")
 
+        model = self.models[upscale]
+
         if width * height > 786432:
             raise ValueError(
                 "Maximum size is 1024x768 or 768x1024 pixels, because of memory limits. Please select a lower width or height."
             )
 
-        if image is not None:
+        if mode == "inpaint":
+            print("using inpaint")
+            pipe = self.inpainting_pipe
+
+            # Load the mask image and invert it if needed
+            image = Image.open(image).convert("RGB")
+            mask = Image.open(mask).convert("RGB")
+
+            if invert_mask:
+                mask = PIL.ImageOps.invert(mask)
+
+            if image.width % 8 != 0 or image.height % 8 != 0:
+                if mask.size == image.size:
+                    mask = crop(mask)
+                image = crop(image)
+
+            if mask.size != image.size:
+                print(
+                    f"WARNING: Mask size ({mask.width}, {mask.height}) is different to image size ({image.width}, {image.height}). Mask will be resized to image size."
+                )
+                mask = mask.resize(image.size)
+
+            extra_kwargs = {
+                "init_image": image,
+                "mask_image": mask,
+            }
+
+        if mode == "img2img":
             print("using img2img")
             pipe = self.img2img_pipe
             extra_kwargs = {
                 "image": Image.open(image).convert("RGB"),
                 "strength": prompt_strength,
             }
-        else:
+
+        if mode == "txt2img":
             print("using txt2img")
             pipe = self.txt2img_pipe
             extra_kwargs = {
@@ -172,23 +257,47 @@ class Predictor(BasePredictor):
             pipe.safety_checker = self.safety_checker
 
         output = pipe(
-            prompt=[prompt] * num_outputs if prompt is not None else None,
-            negative_prompt=[negative_prompt] * num_outputs
-            if negative_prompt is not None
-            else None,
+            prompt=prompt,
+            negative_prompt=negative_prompt,
+            num_images_per_prompt=num_outputs,
             guidance_scale=guidance_scale,
             generator=generator,
             num_inference_steps=num_inference_steps,
             **extra_kwargs,
         )
 
-        output_paths = []
-        for i, sample in enumerate(output.images):
-            if output.nsfw_content_detected and output.nsfw_content_detected[i]:
-                continue
+        # samples = [
+        # output.images[i]
+        # for i, nsfw_flag in enumerate(output.nsfw_content_detected)
+        # if not nsfw_flag
+        # ]
 
-            output_path = f"/tmp/out-{i}.png"
-            sample.save(output_path)
+        # if len(samples) == 0:
+        #     raise Exception(
+        #         f"NSFW content detected. Try running it again, or try a different prompt."
+        #     )
+
+        # if num_outputs > len(samples):
+        #     print(
+        #         f"NSFW content detected in {num_outputs - len(samples)} outputs, returning the remaining {len(samples)} images."
+        #     )
+
+        output_paths = []
+        for i, image in enumerate(output.images):
+            if mode == "inpaint":
+                output_path = f"/tmp/out-{i}.png"
+                sr_image = model.predict(image)
+                sr_image.save(output_path)
+            if mode == "txt2img":
+                output_path = f"/tmp/out-{i}.png"
+                image.save(output_path)
+            if mode == "img2img":
+                output_path = f"/tmp/out-img2img-{i}.png"
+                sr_image = model.predict(image)
+                sr_image.save(output_path)
+
+            print(f"Creating output path: {mode}")
+            print(f"Creating output path: {output_path}")
             output_paths.append(Path(output_path))
 
         if len(output_paths) == 0:
@@ -208,3 +317,14 @@ def make_scheduler(name, config):
         "K_EULER_ANCESTRAL": EulerAncestralDiscreteScheduler.from_config(config),
         "DPMSolverMultistep": DPMSolverMultistepScheduler.from_config(config),
     }[name]
+
+
+def crop(image):
+    height = (image.height // 8) * 8
+    width = (image.width // 8) * 8
+    left = int((image.width - width) / 2)
+    right = left + width
+    top = int((image.height - height) / 2)
+    bottom = top + height
+    image = image.crop((left, top, right, bottom))
+    return image
